@@ -6,7 +6,7 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
+      index: true
     },
 
     type: {
@@ -21,29 +21,29 @@ const notificationSchema = new mongoose.Schema(
         "Approval",
         "Reminder",
         "Welcome",
-        "Other",
+        "Other"
       ],
-      required: true,
+      required: true
     },
 
     title: {
       type: String,
       required: true,
       trim: true,
-      maxlength: 200,
+      maxlength: 200
     },
 
     message: {
       type: String,
       required: true,
       trim: true,
-      maxlength: 1000,
+      maxlength: 1000
     },
 
     isRead: {
       type: Boolean,
       default: false,
-      index: true,
+      index: true
     },
 
     readAt: Date,
@@ -52,40 +52,36 @@ const notificationSchema = new mongoose.Schema(
       type: String,
       enum: ["Low", "Medium", "High", "Urgent"],
       default: "Medium",
-      index: true,
+      index: true
     },
 
     referenceType: {
       type: String,
-      enum: ["Leave", "Attendance", "Payroll", "Document", "User", "Other"],
+      enum: ["Leave", "Attendance", "Payroll", "Document", "User", "Other"]
     },
 
     referenceId: mongoose.Schema.Types.ObjectId,
 
-    actionUrl: {
-      type: String,
-      trim: true,
-    },
+    actionUrl: String,
 
     actionText: {
       type: String,
-      trim: true,
-      maxlength: 50,
+      maxlength: 50
     },
 
     sender: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      ref: "User"
     },
 
     emailSent: {
       type: Boolean,
-      default: false,
+      default: false
     },
 
     smsSent: {
       type: Boolean,
-      default: false,
+      default: false
     },
 
     expiresAt: Date,
@@ -93,121 +89,114 @@ const notificationSchema = new mongoose.Schema(
     metadata: {
       type: Map,
       of: mongoose.Schema.Types.Mixed,
-      default: {},
+      default: {}
     },
 
-    // Soft delete support
     isDeleted: {
       type: Boolean,
       default: false,
-      index: true,
-    },
+      index: true
+    }
   },
   { timestamps: true }
 );
 
+
 //
-// Indexes
+// INDEXES
 //
 notificationSchema.index({ recipient: 1, createdAt: -1 });
 notificationSchema.index({ expiresAt: 1 });
 
+
 //
-// Auto timestamp readAt
+// AUTO-SET readAt (no next)
 //
-notificationSchema.pre("save", function (next) {
-  if (this.isModified("isRead") && this.isRead && !this.readAt) {
+notificationSchema.pre("save", function () {
+  if (this.isRead && !this.readAt) {
     this.readAt = new Date();
   }
-  next();
 });
 
-//
-// Static – create single notification
-//
-notificationSchema.statics.createNotification = async function (data) {
-  const notification = await this.create(data);
-  return notification;
-};
 
 //
-// Static – bulk create
+// 🔹 STATIC METHODS
 //
+
+// single notification
+notificationSchema.statics.createNotification = async function (data) {
+  return this.create(data);
+};
+
+// multiple notifications
 notificationSchema.statics.createManyNotifications = async function (list = []) {
   if (!Array.isArray(list)) throw new Error("Input must be an array");
-  return await this.insertMany(list);
+  return this.insertMany(list);
 };
 
-//
-// Static – unread list
-//
+// unread list
 notificationSchema.statics.getUnreadNotifications = async function (userId) {
-  return await this.find({
+  return this.find({
     recipient: new mongoose.Types.ObjectId(userId),
     isRead: false,
     isDeleted: false,
-    $or: [{ expiresAt: { $exists: false } }, { expiresAt: { $gt: new Date() } }],
+    $or: [
+      { expiresAt: { $exists: false } },
+      { expiresAt: { $gt: new Date() } }
+    ]
   })
     .sort({ createdAt: -1 })
     .populate("sender", "firstName lastName email username");
 };
 
-//
-// Static – unread count
-//
+// unread count
 notificationSchema.statics.getUnreadCount = async function (userId) {
-  return await this.countDocuments({
+  return this.countDocuments({
     recipient: new mongoose.Types.ObjectId(userId),
     isRead: false,
     isDeleted: false,
-    $or: [{ expiresAt: { $exists: false } }, { expiresAt: { $gt: new Date() } }],
+    $or: [
+      { expiresAt: { $exists: false } },
+      { expiresAt: { $gt: new Date() } }
+    ]
   });
 };
 
-//
-// Static – mark all as read
-//
+// mark all as read
 notificationSchema.statics.markAllAsRead = async function (userId) {
-  return await this.updateMany(
+  return this.updateMany(
     { recipient: userId, isRead: false },
     { $set: { isRead: true, readAt: new Date() } }
   );
 };
 
-//
-// Soft delete old notifications
-//
-notificationSchema.statics.deleteOldNotifications = async function (daysOld = 30) {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - daysOld);
+// soft delete old
+notificationSchema.statics.deleteOldNotifications = async function (days = 30) {
+  const cutoff = new Date(Date.now() - days * 86400000);
 
-  return await this.updateMany(
+  return this.updateMany(
     { createdAt: { $lt: cutoff } },
     { $set: { isDeleted: true } }
   );
 };
 
+
 //
-// Instance – mark single read
+// 🔹 INSTANCE METHODS
 //
+
 notificationSchema.methods.markAsRead = async function () {
   if (!this.isRead) {
     this.isRead = true;
     this.readAt = new Date();
   }
-  return await this.save();
+  return this.save();
 };
 
-//
-// Instance – expired flag
-//
 notificationSchema.methods.isExpired = function () {
   return Boolean(this.expiresAt && new Date() > this.expiresAt);
 };
 
-//
-// Instance – lightweight JSON payload for sockets
-//
 notificationSchema.methods.toPushPayload = function () {
   return {
     id: this._id,
@@ -217,19 +206,22 @@ notificationSchema.methods.toPushPayload = function () {
     priority: this.priority,
     createdAt: this.createdAt,
     isRead: this.isRead,
-    actionUrl: this.actionUrl,
+    actionUrl: this.actionUrl
   };
 };
 
-//
-// Virtual – friendly age
-//
-notificationSchema.virtual("age").get(function () {
-  const diff = (Date.now() - this.createdAt) / 1000;
 
-  if (diff < 60) return "Just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} hrs ago`;
+//
+// 🔹 VIRTUALS
+//
+
+notificationSchema.virtual("age").get(function () {
+  const seconds = (Date.now() - this.createdAt) / 1000;
+
+  if (seconds < 60) return "Just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hrs ago`;
+
   return this.createdAt.toLocaleDateString();
 });
 

@@ -6,29 +6,29 @@ const leaveSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
+      index: true
     },
 
     leaveType: {
       type: String,
       enum: ["Paid", "Sick", "Unpaid", "Casual", "Maternity", "Paternity"],
-      required: true,
+      required: true
     },
 
     startDate: {
       type: Date,
-      required: true,
+      required: true
     },
 
     endDate: {
       type: Date,
-      required: true,
+      required: true
     },
 
     numberOfDays: {
       type: Number,
-      required: true,
       min: 0.5,
+      required: true
     },
 
     reason: {
@@ -36,26 +36,25 @@ const leaveSchema = new mongoose.Schema(
       required: true,
       trim: true,
       minlength: 10,
-      maxlength: 500,
+      maxlength: 500
     },
 
     remarks: {
       type: String,
       trim: true,
-      maxlength: 500,
+      maxlength: 500
     },
 
     status: {
       type: String,
       enum: ["Pending", "Approved", "Rejected", "Cancelled"],
       default: "Pending",
-      required: true,
-      index: true,
+      index: true
     },
 
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      ref: "User"
     },
 
     approvedAt: Date,
@@ -63,7 +62,7 @@ const leaveSchema = new mongoose.Schema(
     approverComments: {
       type: String,
       trim: true,
-      maxlength: 500,
+      maxlength: 500
     },
 
     attachments: [
@@ -72,26 +71,25 @@ const leaveSchema = new mongoose.Schema(
         fileUrl: String,
         uploadedAt: {
           type: Date,
-          default: Date.now,
-        },
-      },
+          default: Date.now
+        }
+      }
     ],
 
-    // Soft delete
     isDeleted: {
       type: Boolean,
       default: false,
-      index: true,
-    },
+      index: true
+    }
   },
   { timestamps: true }
 );
 
 //
-// VALIDATIONS
+//  VALIDATIONS
 //
 
-// Prevent past-dated new leave
+// prevent past dated start when creating
 leaveSchema.path("startDate").validate(function (value) {
   if (!this.isNew) return true;
   const today = new Date();
@@ -99,15 +97,17 @@ leaveSchema.path("startDate").validate(function (value) {
   return value >= today;
 }, "Start date cannot be in the past");
 
-// End after start
+// ensure end >= start
 leaveSchema.path("endDate").validate(function (value) {
   return value >= this.startDate;
-}, "End date must be after or equal to start date");
+}, "End date must be after start date");
+
 
 //
-// CALCULATE NUMBER OF DAYS
+//  PRE-SAVE — auto compute days + approval time + overlap check
 //
-leaveSchema.pre("save", function (next) {
+leaveSchema.pre("save", async function () {
+  // calculate number of days
   if (this.startDate && this.endDate) {
     const s = new Date(this.startDate);
     const e = new Date(this.endDate);
@@ -117,7 +117,7 @@ leaveSchema.pre("save", function (next) {
     this.numberOfDays = Math.max(0.5, diff);
   }
 
-  // set approval time
+  // set approval timestamp
   if (
     this.isModified("status") &&
     ["Approved", "Rejected"].includes(this.status)
@@ -125,91 +125,79 @@ leaveSchema.pre("save", function (next) {
     this.approvedAt = new Date();
   }
 
-  next();
-});
-
-//
-// Prevent overlapping leave
-//
-leaveSchema.pre("save", async function (next) {
-  if (!this.isModified("startDate") && !this.isModified("endDate")) return next();
-
-  const overlap = await this.constructor.findOne({
+  // prevent overlapping leave
+  const overlapping = await this.constructor.findOne({
     employee: this.employee,
     status: { $in: ["Pending", "Approved"] },
     _id: { $ne: this._id },
     startDate: { $lte: this.endDate },
-    endDate: { $gte: this.startDate },
+    endDate: { $gte: this.startDate }
   });
 
-  if (overlap) {
-    return next(new Error("Overlapping leave request exists"));
+  if (overlapping) {
+    throw new Error("Overlapping leave request exists");
   }
-
-  next();
 });
 
+
 //
-// STATIC — Overlap API helper
+//  STATIC METHODS
 //
+
 leaveSchema.statics.checkOverlap = async function (
   employeeId,
   startDate,
   endDate,
-  exclude = null
+  exclude
 ) {
-  return await this.exists({
+  return this.exists({
     employee: new mongoose.Types.ObjectId(employeeId),
     status: { $in: ["Pending", "Approved"] },
     _id: exclude ? { $ne: exclude } : { $exists: true },
     startDate: { $lte: endDate },
-    endDate: { $gte: startDate },
+    endDate: { $gte: startDate }
   });
 };
 
-//
-// STATIC — History
-//
 leaveSchema.statics.getLeaveHistory = async function (employeeId, year) {
   const start = new Date(year, 0, 1);
   const end = new Date(year, 11, 31);
 
-  return await this.find({
+  return this.find({
     employee: employeeId,
-    startDate: { $gte: start, $lte: end },
+    startDate: { $gte: start, $lte: end }
   })
     .sort({ startDate: -1 })
     .populate("approvedBy", "firstName lastName username");
 };
 
-//
-// STATIC — Stats by type
-//
 leaveSchema.statics.getLeaveStatsByType = async function (employeeId, year) {
   const start = new Date(year, 0, 1);
   const end = new Date(year, 11, 31);
 
-  return await this.aggregate([
+  return this.aggregate([
     {
       $match: {
         employee: new mongoose.Types.ObjectId(employeeId),
         startDate: { $gte: start, $lte: end },
-        status: "Approved",
-      },
+        status: "Approved"
+      }
     },
     {
       $group: {
         _id: "$leaveType",
         totalDays: { $sum: "$numberOfDays" },
-        count: { $sum: 1 },
-      },
-    },
+        count: { $sum: 1 }
+      }
+    }
   ]);
 };
 
+
 //
-// INSTANCE HELPERS
+//  INSTANCE METHODS
 //
+
 leaveSchema.methods.canBeCancelled = function () {
   return (
     this.status === "Pending" ||
@@ -225,19 +213,19 @@ leaveSchema.methods.approve = async function (approverId, comments = "") {
   this.status = "Approved";
   this.approvedBy = approverId;
   this.approverComments = comments;
-  return await this.save();
+  return this.save();
 };
 
-leaveSchema.methods.reject = async function (approverId, comments) {
+leaveSchema.methods.reject = async function (approverId, comments = "") {
   this.status = "Rejected";
   this.approvedBy = approverId;
   this.approverComments = comments || "Rejected";
-  return await this.save();
+  return this.save();
 };
 
 leaveSchema.methods.cancel = async function () {
   this.status = "Cancelled";
-  return await this.save();
+  return this.save();
 };
 
 export default mongoose.model("Leave", leaveSchema);
