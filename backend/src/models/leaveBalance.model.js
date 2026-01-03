@@ -1,318 +1,234 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const leaveBalanceSchema = new mongoose.Schema({
-  employee: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: [true, 'Employee reference is required']
-  },
-  
-  year: {
-    type: Number,
-    required: [true, 'Year is required'],
-    min: [2020, 'Year must be 2020 or later'],
-    max: [2100, 'Year must be before 2100'],
-    default: () => new Date().getFullYear()
-  },
-  
-  // Paid Leave
-  paidLeave: {
-    total: {
-      type: Number,
-      default: 12,
-      min: [0, 'Total paid leave cannot be negative']
-    },
-    used: {
-      type: Number,
-      default: 0,
-      min: [0, 'Used paid leave cannot be negative']
-    },
-    remaining: {
-      type: Number,
-      default: function() {
-        return this.paidLeave.total - this.paidLeave.used;
-      },
-      min: [0, 'Remaining paid leave cannot be negative']
-    }
-  },
-  
-  // Sick Leave
-  sickLeave: {
-    total: {
-      type: Number,
-      default: 7,
-      min: [0, 'Total sick leave cannot be negative']
-    },
-    used: {
-      type: Number,
-      default: 0,
-      min: [0, 'Used sick leave cannot be negative']
-    },
-    remaining: {
-      type: Number,
-      default: function() {
-        return this.sickLeave.total - this.sickLeave.used;
-      },
-      min: [0, 'Remaining sick leave cannot be negative']
-    }
-  },
-  
-  // Casual Leave
-  casualLeave: {
-    total: {
-      type: Number,
-      default: 10,
-      min: [0, 'Total casual leave cannot be negative']
-    },
-    used: {
-      type: Number,
-      default: 0,
-      min: [0, 'Used casual leave cannot be negative']
-    },
-    remaining: {
-      type: Number,
-      default: function() {
-        return this.casualLeave.total - this.casualLeave.used;
-      },
-      min: [0, 'Remaining casual leave cannot be negative']
-    }
-  },
-  
-  // Maternity Leave (if applicable)
-  maternityLeave: {
-    total: {
-      type: Number,
-      default: 0,
-      min: [0, 'Total maternity leave cannot be negative']
-    },
-    used: {
-      type: Number,
-      default: 0,
-      min: [0, 'Used maternity leave cannot be negative']
-    },
-    remaining: {
-      type: Number,
-      default: function() {
-        return this.maternityLeave.total - this.maternityLeave.used;
-      },
-      min: [0, 'Remaining maternity leave cannot be negative']
-    }
-  },
-  
-  // Paternity Leave (if applicable)
-  paternityLeave: {
-    total: {
-      type: Number,
-      default: 0,
-      min: [0, 'Total paternity leave cannot be negative']
-    },
-    used: {
-      type: Number,
-      default: 0,
-      min: [0, 'Used paternity leave cannot be negative']
-    },
-    remaining: {
-      type: Number,
-      default: function() {
-        return this.paternityLeave.total - this.paternityLeave.used;
-      },
-      min: [0, 'Remaining paternity leave cannot be negative']
-    }
-  },
-  
-  // Carry Forward from previous year
-  carryForward: {
-    type: Number,
-    default: 0,
-    min: [0, 'Carry forward cannot be negative'],
-    max: [15, 'Maximum carry forward is 15 days']
-  },
-  
-  // Leave History Summary
-  totalLeaveTaken: {
-    type: Number,
-    default: 0,
-    min: [0, 'Total leave taken cannot be negative']
-  },
-  
-  // Last Updated
-  lastUpdated: {
-    type: Date,
-    default: Date.now
-  },
-  
-}, {
-  timestamps: true
-});
+const leaveSchema = {
+  total: { type: Number, default: 0, min: 0 },
+  used: { type: Number, default: 0, min: 0 },
+  remaining: { type: Number, default: 0, min: 0 },
+};
 
-// Compound unique index: one leave balance per employee per year
+const leaveBalanceSchema = new mongoose.Schema(
+  {
+    employee: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+
+    year: {
+      type: Number,
+      required: true,
+      min: 2020,
+      max: 2100,
+      default: () => new Date().getFullYear(),
+    },
+
+    paidLeave: { type: leaveSchema, default: {} },
+    sickLeave: { type: leaveSchema, default: {} },
+    casualLeave: { type: leaveSchema, default: {} },
+    maternityLeave: { type: leaveSchema, default: {} },
+    paternityLeave: { type: leaveSchema, default: {} },
+
+    carryForward: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 15,
+    },
+
+    totalLeaveTaken: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    lastUpdated: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { timestamps: true }
+);
+
+// unique employee-year record
 leaveBalanceSchema.index({ employee: 1, year: 1 }, { unique: true });
 
-// Pre-save middleware to calculate remaining leaves
-leaveBalanceSchema.pre('save', function(next) {
-  // Calculate remaining for each leave type
-  this.paidLeave.remaining = Math.max(0, this.paidLeave.total - this.paidLeave.used);
-  this.sickLeave.remaining = Math.max(0, this.sickLeave.total - this.sickLeave.used);
-  this.casualLeave.remaining = Math.max(0, this.casualLeave.total - this.casualLeave.used);
-  this.maternityLeave.remaining = Math.max(0, this.maternityLeave.total - this.maternityLeave.used);
-  this.paternityLeave.remaining = Math.max(0, this.paternityLeave.total - this.paternityLeave.used);
-  
-  // Calculate total leave taken
-  this.totalLeaveTaken = 
-    this.paidLeave.used + 
-    this.sickLeave.used + 
-    this.casualLeave.used + 
-    this.maternityLeave.used + 
-    this.paternityLeave.used;
-  
-  this.lastUpdated = Date.now();
-  
+//
+// Helper: recompute leaves
+//
+function recompute(doc) {
+  const types = [
+    "paidLeave",
+    "sickLeave",
+    "casualLeave",
+    "maternityLeave",
+    "paternityLeave",
+  ];
+
+  doc.totalLeaveTaken = 0;
+
+  types.forEach((t) => {
+    const node = doc[t] || {};
+
+    node.total = Number(node.total || 0);
+    node.used = Number(node.used || 0);
+    node.remaining = Math.max(0, node.total - node.used);
+
+    doc[t] = node;
+    doc.totalLeaveTaken += node.used;
+  });
+
+  doc.lastUpdated = new Date();
+}
+
+//
+// Pre-save: auto calculate remaining + totals
+//
+leaveBalanceSchema.pre("save", function (next) {
+  recompute(this);
   next();
 });
 
-// Static method to initialize leave balance for new employee
-leaveBalanceSchema.statics.initializeForEmployee = async function(employeeId, customQuotas = {}) {
-  const currentYear = new Date().getFullYear();
-  
-  const leaveBalance = new this({
-    employee: employeeId,
-    year: currentYear,
-    paidLeave: {
-      total: customQuotas.paidLeave || 12,
-      used: 0
-    },
-    sickLeave: {
-      total: customQuotas.sickLeave || 7,
-      used: 0
-    },
-    casualLeave: {
-      total: customQuotas.casualLeave || 10,
-      used: 0
-    }
+//
+// Static: initialize for employee
+//
+leaveBalanceSchema.statics.initializeForEmployee = async function (
+  employeeId,
+  custom = {}
+) {
+  return await this.create({
+    employee: new mongoose.Types.ObjectId(employeeId),
+    year: new Date().getFullYear(),
+    paidLeave: { total: custom.paidLeave ?? 12 },
+    sickLeave: { total: custom.sickLeave ?? 7 },
+    casualLeave: { total: custom.casualLeave ?? 10 },
   });
-  
-  return await leaveBalance.save();
 };
 
-// Static method to get leave balance for employee
-leaveBalanceSchema.statics.getBalanceForEmployee = async function(employeeId, year) {
-  const queryYear = year || new Date().getFullYear();
-  
-  let balance = await this.findOne({
-    employee: employeeId,
-    year: queryYear
+//
+// Static: get or create balance
+//
+leaveBalanceSchema.statics.getBalanceForEmployee = async function (
+  employeeId,
+  year = new Date().getFullYear()
+) {
+  let record = await this.findOne({
+    employee: new mongoose.Types.ObjectId(employeeId),
+    year,
   });
-  
-  // If not found, initialize one
-  if (!balance) {
-    balance = await this.initializeForEmployee(employeeId);
-  }
-  
-  return balance;
+
+  if (!record) record = await this.initializeForEmployee(employeeId);
+
+  return record;
 };
 
-// Static method to reset balances for new year
-leaveBalanceSchema.statics.resetForNewYear = async function(year) {
-  const previousYear = year - 1;
-  
-  // Get all balances from previous year
-  const previousBalances = await this.find({ year: previousYear });
-  
-  const newBalances = [];
-  
-  for (const prevBalance of previousBalances) {
-    // Calculate carry forward (max 15 days of unused paid leave)
-    const carryForward = Math.min(prevBalance.paidLeave.remaining, 15);
-    
-    const newBalance = new this({
-      employee: prevBalance.employee,
-      year: year,
-      paidLeave: {
-        total: prevBalance.paidLeave.total + carryForward,
-        used: 0
-      },
-      sickLeave: {
-        total: prevBalance.sickLeave.total,
-        used: 0
-      },
-      casualLeave: {
-        total: prevBalance.casualLeave.total,
-        used: 0
-      },
-      carryForward: carryForward
-    });
-    
-    newBalances.push(newBalance);
-  }
-  
-  return await this.insertMany(newBalances);
+//
+// Static: reset for new year with carry forward
+//
+leaveBalanceSchema.statics.resetForNewYear = async function (year) {
+  const prevYear = year - 1;
+
+  const prev = await this.find({ year: prevYear });
+
+  const docs = prev.map((b) => {
+    const carry = Math.min(b.paidLeave.remaining || 0, 15);
+
+    return {
+      employee: b.employee,
+      year,
+      paidLeave: { total: (b.paidLeave.total || 12) + carry },
+      sickLeave: { total: b.sickLeave.total || 7 },
+      casualLeave: { total: b.casualLeave.total || 10 },
+      carryForward: carry,
+    };
+  });
+
+  return await this.insertMany(docs);
 };
 
-// Method to deduct leave
-leaveBalanceSchema.methods.deductLeave = async function(leaveType, days) {
-  const typeMap = {
-    'Paid': 'paidLeave',
-    'Sick': 'sickLeave',
-    'Casual': 'casualLeave',
-    'Maternity': 'maternityLeave',
-    'Paternity': 'paternityLeave'
+//
+// Instance: deduct leave
+//
+leaveBalanceSchema.methods.deductLeave = async function (leaveType, days) {
+  const map = {
+    Paid: "paidLeave",
+    Sick: "sickLeave",
+    Casual: "casualLeave",
+    Maternity: "maternityLeave",
+    Paternity: "paternityLeave",
   };
-  
-  const field = typeMap[leaveType];
-  
-  if (!field || !this[field]) {
-    throw new Error(`Invalid leave type: ${leaveType}`);
-  }
-  
-  if (this[field].remaining < days) {
-    throw new Error(`Insufficient ${leaveType.toLowerCase()} leave balance`);
-  }
-  
+
+  const field = map[leaveType];
+  if (!field) throw new Error("Invalid leave type");
+
+  if (this[field].remaining < days)
+    throw new Error(`Insufficient ${leaveType} leave balance`);
+
   this[field].used += days;
+
   return await this.save();
 };
 
-// Method to restore leave (when leave is cancelled/rejected)
-leaveBalanceSchema.methods.restoreLeave = async function(leaveType, days) {
-  const typeMap = {
-    'Paid': 'paidLeave',
-    'Sick': 'sickLeave',
-    'Casual': 'casualLeave',
-    'Maternity': 'maternityLeave',
-    'Paternity': 'paternityLeave'
+//
+// Instance: restore leave
+//
+leaveBalanceSchema.methods.restoreLeave = async function (leaveType, days) {
+  const map = {
+    Paid: "paidLeave",
+    Sick: "sickLeave",
+    Casual: "casualLeave",
+    Maternity: "maternityLeave",
+    Paternity: "paternityLeave",
   };
-  
-  const field = typeMap[leaveType];
-  
-  if (!field || !this[field]) {
-    throw new Error(`Invalid leave type: ${leaveType}`);
-  }
-  
+
+  const field = map[leaveType];
+  if (!field) throw new Error("Invalid leave type");
+
   this[field].used = Math.max(0, this[field].used - days);
+
   return await this.save();
 };
 
-// Method to check if sufficient leave balance exists
-leaveBalanceSchema.methods.hasSufficientBalance = function(leaveType, days) {
-  const typeMap = {
-    'Paid': 'paidLeave',
-    'Sick': 'sickLeave',
-    'Casual': 'casualLeave',
-    'Maternity': 'maternityLeave',
-    'Paternity': 'paternityLeave',
-    'Unpaid': null // Unpaid leave has no balance check
+//
+// Instance: admin adjust leave
+//
+leaveBalanceSchema.methods.adjustLeave = async function (leaveType, totalDays) {
+  const map = {
+    Paid: "paidLeave",
+    Sick: "sickLeave",
+    Casual: "casualLeave",
+    Maternity: "maternityLeave",
+    Paternity: "paternityLeave",
   };
-  
-  const field = typeMap[leaveType];
-  
-  if (!field) return true; // Unpaid leave
-  if (!this[field]) return false;
-  
-  return this[field].remaining >= days;
+
+  const field = map[leaveType];
+
+  this[field].total = Math.max(0, totalDays);
+
+  return await this.save();
 };
 
-// Virtual for total available leaves
-leaveBalanceSchema.virtual('totalAvailable').get(function() {
+//
+// Check balance
+//
+leaveBalanceSchema.methods.hasSufficientBalance = function (leaveType, days) {
+  if (leaveType === "Unpaid") return true;
+  const map = {
+    Paid: "paidLeave",
+    Sick: "sickLeave",
+    Casual: "casualLeave",
+    Maternity: "maternityLeave",
+    Paternity: "paternityLeave",
+  };
+
+  const field = map[leaveType];
+  return field && this[field].remaining >= days;
+};
+
+//
+// Virtuals
+//
+leaveBalanceSchema.virtual("totalAvailable").get(function () {
   return (
     this.paidLeave.remaining +
     this.sickLeave.remaining +
@@ -322,8 +238,7 @@ leaveBalanceSchema.virtual('totalAvailable').get(function() {
   );
 });
 
-// Virtual for total allocated leaves
-leaveBalanceSchema.virtual('totalAllocated').get(function() {
+leaveBalanceSchema.virtual("totalAllocated").get(function () {
   return (
     this.paidLeave.total +
     this.sickLeave.total +
@@ -333,7 +248,7 @@ leaveBalanceSchema.virtual('totalAllocated').get(function() {
   );
 });
 
-leaveBalanceSchema.set('toJSON', { virtuals: true });
-leaveBalanceSchema.set('toObject', { virtuals: true });
+leaveBalanceSchema.set("toJSON", { virtuals: true });
+leaveBalanceSchema.set("toObject", { virtuals: true });
 
-export default mongoose.model('LeaveBalance', leaveBalanceSchema);
+export default mongoose.model("LeaveBalance", leaveBalanceSchema);

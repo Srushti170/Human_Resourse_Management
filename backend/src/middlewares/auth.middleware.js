@@ -1,33 +1,27 @@
-import { ApiError } from "../utils/ApiError.js";
-import { asyncHandler } from "../utils/asyncHandler.js";
-import jwt from "jsonwebtoken"
-import { User } from "../models/user.model.js";
+import jwt from "jsonwebtoken";
+import User from "../models/user.model.js";
 
+export const protect = async (req, res, next) => {
+  try {
+    const token =
+      req.headers.authorization?.startsWith("Bearer") &&
+      req.headers.authorization.split(" ")[1];
 
-export const verifyJWT = asyncHandler(async(req, res, next) => {
+    if (!token) return res.status(401).json({ message: "Not authorized" });
 
-    try {
-        const token = req.cookies?.accessToken || req.header("Authorization")?.replace("Bearer","")
-    
-        if(!token){
-            throw new ApiError(401, "Unathorized access")
-        }
-    
-        const decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET)
-    
-        const user = await User.findById(decodedToken?._id).select(
-            "-password -refreshToken"
-        )
-    
-        if(!user){
-            throw new ApiError(401, "Invalid access token")
-        }
-    
-        req.user = user;
-    
-        next()
-    } catch (error) {
-        throw new ApiError(401, error?.message || "Invalid access token")
-    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-})
+    req.user = await User.findById(decoded.id);
+
+    next();
+  } catch (err) {
+    res.status(401).json({ message: "Token failed" });
+  }
+};
+
+export const isAdmin = (req, res, next) => {
+  if (req.user.role !== "Admin")
+    return res.status(403).json({ message: "Admin only" });
+
+  next();
+};
