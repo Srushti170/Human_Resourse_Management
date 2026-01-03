@@ -76,21 +76,18 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
   },
   { timestamps: true }
 );
 
 //
-// ---------- STATIC METHOD : hashpassword ----------
+// ---------- PRE SAVE : HASH PASSWORD ----------
 //
-UserSchema.statics.hashpassword = async function (password) {
-  return await bcrypt.hash(password, 10);
-};
+UserSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  this.password = await bcrypt.hash(this.password, 10);
+  next();
+});
 
 //
 // ---------- INSTANCE METHOD : validate password ----------
@@ -103,6 +100,10 @@ UserSchema.methods.isValidPassword = async function (password) {
 // ---------- INSTANCE METHOD : generate JWT ----------
 //
 UserSchema.methods.generatejwt = function () {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not defined");
+  }
+
   return jwt.sign(
     {
       id: this._id,
