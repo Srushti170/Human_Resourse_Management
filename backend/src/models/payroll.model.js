@@ -16,37 +16,24 @@ const payrollSchema = new mongoose.Schema(
     },
 
     allowances: {
-      type: {
-        hra: { type: Number, default: 0, min: 0 },
-        transport: { type: Number, default: 0, min: 0 },
-        medical: { type: Number, default: 0, min: 0 },
-        bonus: { type: Number, default: 0, min: 0 },
-        others: { type: Number, default: 0, min: 0 },
-      },
-      default: {},
+      hra: { type: Number, default: 0, min: 0 },
+      transport: { type: Number, default: 0, min: 0 },
+      medical: { type: Number, default: 0, min: 0 },
+      bonus: { type: Number, default: 0, min: 0 },
+      others: { type: Number, default: 0, min: 0 },
     },
 
     deductions: {
-      type: {
-        tax: { type: Number, default: 0, min: 0 },
-        providentFund: { type: Number, default: 0, min: 0 },
-        insurance: { type: Number, default: 0, min: 0 },
-        professionalTax: { type: Number, default: 0, min: 0 },
-        loanDeduction: { type: Number, default: 0, min: 0 },
-        others: { type: Number, default: 0, min: 0 },
-      },
-      default: {},
+      tax: { type: Number, default: 0, min: 0 },
+      providentFund: { type: Number, default: 0, min: 0 },
+      insurance: { type: Number, default: 0, min: 0 },
+      professionalTax: { type: Number, default: 0, min: 0 },
+      loanDeduction: { type: Number, default: 0, min: 0 },
+      others: { type: Number, default: 0, min: 0 },
     },
 
-    grossSalary: {
-      type: Number,
-      min: 0,
-    },
-
-    netSalary: {
-      type: Number,
-      min: 0,
-    },
+    grossSalary: { type: Number, min: 0 },
+    netSalary: { type: Number, min: 0 },
 
     month: {
       type: Number,
@@ -68,7 +55,7 @@ const payrollSchema = new mongoose.Schema(
       type: String,
       enum: ["Pending", "Processing", "Paid", "Failed", "On Hold"],
       default: "Pending",
-      required: true,
+      index: true,
     },
 
     paymentMethod: {
@@ -77,48 +64,23 @@ const payrollSchema = new mongoose.Schema(
       default: "Bank Transfer",
     },
 
-    transactionId: {
-      type: String,
-      trim: true,
-    },
+    transactionId: { type: String, trim: true },
 
     bankAccount: {
-      accountNumber: { type: String, trim: true },
-      accountHolderName: { type: String, trim: true },
-      bankName: { type: String, trim: true },
-      ifscCode: { type: String, trim: true, uppercase: true },
-      branch: { type: String, trim: true },
+      accountNumber: String,
+      accountHolderName: String,
+      bankName: String,
+      ifscCode: String,
+      branch: String,
     },
 
-    workingDays: {
-      type: Number,
-      min: 0,
-      max: 31,
-    },
+    workingDays: { type: Number, min: 0, max: 31 },
+    totalDays: { type: Number, min: 0, max: 31 },
 
-    totalDays: {
-      type: Number,
-      min: 0,
-      max: 31,
-    },
+    paidLeaveDays: { type: Number, default: 0, min: 0 },
+    unpaidLeaveDays: { type: Number, default: 0, min: 0 },
 
-    paidLeaveDays: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    unpaidLeaveDays: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    notes: {
-      type: String,
-      trim: true,
-      maxlength: 1000,
-    },
+    notes: { type: String, trim: true, maxlength: 1000 },
 
     salarySlipUrl: String,
 
@@ -128,29 +90,45 @@ const payrollSchema = new mongoose.Schema(
     },
 
     processedAt: Date,
+
+    // soft delete
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   { timestamps: true }
 );
 
 //
-// Unique payroll per employee per month-year
+// UNIQUE: one payroll per employee per month
 //
 payrollSchema.index({ employee: 1, month: 1, year: 1 }, { unique: true });
 
+
 //
-// Auto-calc salary before save
+// AUTO-CALCULATE SALARY (no next callback)
 //
-payrollSchema.pre("save", function (next) {
+payrollSchema.pre("save", function () {
   const allowances = this.allowances || {};
   const deductions = this.deductions || {};
 
-  const totalAllowances = Object.values(allowances).reduce((s, v) => s + (v || 0), 0);
-  const totalDeductions = Object.values(deductions).reduce((s, v) => s + (v || 0), 0);
+  const totalAllowances = Object.values(allowances).reduce(
+    (sum, v) => sum + (v || 0),
+    0
+  );
+
+  const totalDeductions = Object.values(deductions).reduce(
+    (sum, v) => sum + (v || 0),
+    0
+  );
 
   this.grossSalary = (this.baseSalary || 0) + totalAllowances;
 
   let net = this.grossSalary - totalDeductions;
 
+  // unpaid leave penalty
   if (this.totalDays && this.unpaidLeaveDays) {
     const perDay = this.grossSalary / this.totalDays;
     net -= perDay * this.unpaidLeaveDays;
@@ -158,35 +136,38 @@ payrollSchema.pre("save", function (next) {
 
   this.netSalary = Math.max(0, net);
 
-  if (
-    this.isModified("paymentStatus") &&
-    this.paymentStatus === "Paid" &&
-    !this.processedAt
-  ) {
+  // stamp payment time
+  if (this.paymentStatus === "Paid" && !this.processedAt) {
     this.processedAt = new Date();
     if (!this.paymentDate) this.paymentDate = new Date();
   }
-
-  next();
 });
 
+
 //
-// Instance helpers
+// INSTANCE METHODS
 //
 payrollSchema.methods.getTotalAllowances = function () {
-  return Object.values(this.allowances || {}).reduce((s, v) => s + (v || 0), 0);
+  return Object.values(this.allowances || {}).reduce(
+    (s, v) => s + (v || 0),
+    0
+  );
 };
 
 payrollSchema.methods.getTotalDeductions = function () {
-  return Object.values(this.deductions || {}).reduce((s, v) => s + (v || 0), 0);
+  return Object.values(this.deductions || {}).reduce(
+    (s, v) => s + (v || 0),
+    0
+  );
 };
 
 payrollSchema.methods.canBeModified = function () {
   return ["Pending", "On Hold"].includes(this.paymentStatus);
 };
 
+
 //
-// Virtual month name
+// VIRTUALS
 //
 payrollSchema.virtual("monthName").get(function () {
   return [
@@ -195,11 +176,12 @@ payrollSchema.virtual("monthName").get(function () {
   ][this.month - 1];
 });
 
+
 //
-// Safe yearly summary (fixed aggregation bug)
+// YEARLY SUMMARY
 //
 payrollSchema.statics.getYearlySummary = async function (employeeId, year) {
-  const summary = await this.aggregate([
+  const result = await this.aggregate([
     {
       $match: {
         employee: new mongoose.Types.ObjectId(employeeId),
@@ -212,18 +194,14 @@ payrollSchema.statics.getYearlySummary = async function (employeeId, year) {
         _id: null,
         totalGross: { $sum: "$grossSalary" },
         totalNet: { $sum: "$netSalary" },
-        totalDeductions: { $sum: "$deductions.tax" },
         monthsPaid: { $sum: 1 },
       },
     },
   ]);
 
-  return summary[0] || {
-    totalGross: 0,
-    totalNet: 0,
-    totalDeductions: 0,
-    monthsPaid: 0,
-  };
+  return (
+    result[0] || { totalGross: 0, totalNet: 0, monthsPaid: 0 }
+  );
 };
 
 export default mongoose.model("Payroll", payrollSchema);

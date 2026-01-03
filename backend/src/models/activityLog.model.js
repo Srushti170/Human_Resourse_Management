@@ -6,7 +6,7 @@ const activityLogSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
+      index: true
     },
 
     action: {
@@ -52,16 +52,16 @@ const activityLogSchema = new mongoose.Schema(
         "REPORT_GENERATED",
         "DATA_EXPORTED",
 
-        "OTHER",
+        "OTHER"
       ],
-      index: true,
+      index: true
     },
 
     description: {
       type: String,
       required: true,
       trim: true,
-      maxlength: 1000,
+      maxlength: 1000
     },
 
     ipAddress: String,
@@ -71,10 +71,10 @@ const activityLogSchema = new mongoose.Schema(
       type: {
         type: String,
         enum: ["Desktop", "Mobile", "Tablet", "Other"],
-        default: "Other",
+        default: "Other"
       },
       os: String,
-      browser: String,
+      browser: String
     },
 
     resourceType: {
@@ -86,8 +86,8 @@ const activityLogSchema = new mongoose.Schema(
         "Payroll",
         "Document",
         "Notification",
-        "Other",
-      ],
+        "Other"
+      ]
     },
 
     resourceId: mongoose.Schema.Types.ObjectId,
@@ -96,46 +96,46 @@ const activityLogSchema = new mongoose.Schema(
       type: String,
       enum: ["Success", "Failed", "Pending"],
       default: "Success",
-      index: true,
+      index: true
     },
 
     errorMessage: {
       type: String,
       trim: true,
-      maxlength: 1000,
+      maxlength: 1000
     },
 
     changes: {
       type: Map,
       of: mongoose.Schema.Types.Mixed,
-      default: {},
+      default: {}
     },
 
     metadata: {
       type: Map,
       of: mongoose.Schema.Types.Mixed,
-      default: {},
+      default: {}
     },
 
     severity: {
       type: String,
       enum: ["Low", "Medium", "High", "Critical"],
       default: "Low",
-      index: true,
+      index: true
     },
 
-    // soft delete
     isDeleted: {
       type: Boolean,
       default: false,
-      index: true,
-    },
+      index: true
+    }
   },
   { timestamps: true }
 );
 
+
 //
-// INDEXES
+// 📌 Indexes
 //
 activityLogSchema.index({ user: 1, createdAt: -1 });
 activityLogSchema.index({ action: 1 });
@@ -143,31 +143,37 @@ activityLogSchema.index({ resourceType: 1, resourceId: 1 });
 activityLogSchema.index({ status: 1 });
 activityLogSchema.index({ createdAt: -1 });
 
-// optional TTL (kept but soft-deletes preferred)
+//
+// ⏱ TTL example (only Low severity auto-expire)
+//
 activityLogSchema.index(
   { createdAt: 1 },
-  { expireAfterSeconds: 31536000, partialFilterExpression: { severity: "Low" } }
+  {
+    expireAfterSeconds: 31536000,
+    partialFilterExpression: { severity: "Low" }
+  }
 );
 
+
 //
-// AUTO severity escalation on failure
+// 🚨 Auto severity upgrade (Mongoose 7 safe — no next)
 //
-activityLogSchema.pre("save", function (next) {
+activityLogSchema.pre("save", function () {
   if (this.status === "Failed" && this.severity === "Low") {
     this.severity = "High";
   }
-  next();
 });
 
+
 //
-// STATIC HELPERS
+// 🧰 Static helpers
 //
 activityLogSchema.statics.log = async function (data) {
   try {
     return await this.create(data);
   } catch (err) {
     console.error("ActivityLog error:", err.message);
-    return null;
+    return null; // do not break main flow
   }
 };
 
@@ -179,9 +185,9 @@ activityLogSchema.statics.fromRequest = async function ({
   resourceType,
   resourceId,
   status = "Success",
-  severity = "Low",
+  severity = "Low"
 }) {
-  return await this.log({
+  return this.log({
     user: userId,
     action,
     description,
@@ -190,7 +196,7 @@ activityLogSchema.statics.fromRequest = async function ({
     status,
     severity,
     ipAddress: req?.ip,
-    userAgent: req?.headers?.["user-agent"],
+    userAgent: req?.headers?.["user-agent"]
   });
 };
 
@@ -200,15 +206,13 @@ activityLogSchema.statics.getUserLogs = async function (
 ) {
   const query = {
     user: new mongoose.Types.ObjectId(userId),
-    isDeleted: false,
+    isDeleted: false
   };
 
   if (action) query.action = action;
+  if (startDate && endDate) query.createdAt = { $gte: startDate, $lte: endDate };
 
-  if (startDate && endDate)
-    query.createdAt = { $gte: startDate, $lte: endDate };
-
-  return await this.find(query)
+  return this.find(query)
     .sort({ createdAt: -1 })
     .limit(limit)
     .skip(skip)
@@ -225,7 +229,7 @@ activityLogSchema.statics.getRecentActivity = async function (
   if (filters.action) query.action = filters.action;
   if (filters.resourceType) query.resourceType = filters.resourceType;
 
-  return await this.find(query)
+  return this.find(query)
     .sort({ createdAt: -1 })
     .limit(limit)
     .populate("user", "firstName lastName email employeeId")
@@ -233,33 +237,24 @@ activityLogSchema.statics.getRecentActivity = async function (
 };
 
 activityLogSchema.statics.getActivityStats = async function (start, end) {
-  return await this.aggregate([
-    {
-      $match: { createdAt: { $gte: start, $lte: end } },
-    },
+  return this.aggregate([
+    { $match: { createdAt: { $gte: start, $lte: end } } },
     {
       $group: {
         _id: "$action",
         count: { $sum: 1 },
-        success: {
-          $sum: { $cond: [{ $eq: ["$status", "Success"] }, 1, 0] },
-        },
-        failed: {
-          $sum: { $cond: [{ $eq: ["$status", "Failed"] }, 1, 0] },
-        },
-      },
+        success: { $sum: { $cond: [{ $eq: ["$status", "Success"] }, 1, 0] } },
+        failed: { $sum: { $cond: [{ $eq: ["$status", "Failed"] }, 1, 0] } }
+      }
     },
-    { $sort: { count: -1 } },
+    { $sort: { count: -1 } }
   ]);
 };
 
-activityLogSchema.statics.getLoginHistory = async function (
-  userId,
-  limit = 10
-) {
-  return await this.find({
+activityLogSchema.statics.getLoginHistory = async function (userId, limit = 10) {
+  return this.find({
     user: userId,
-    action: "LOGIN",
+    action: "LOGIN"
   })
     .sort({ createdAt: -1 })
     .limit(limit)
@@ -269,47 +264,46 @@ activityLogSchema.statics.getLoginHistory = async function (
 
 activityLogSchema.statics.detectSuspiciousActivity = async function (
   userId,
-  windowMinutes = 60
+  minutes = 60
 ) {
-  const since = new Date(Date.now() - windowMinutes * 60000);
+  const since = new Date(Date.now() - minutes * 60000);
 
   const failedAttempts = await this.countDocuments({
     user: userId,
     action: { $in: ["LOGIN", "PASSWORD_RESET"] },
     status: "Failed",
-    createdAt: { $gte: since },
+    createdAt: { $gte: since }
   });
 
   const uniqueIps = await this.distinct("ipAddress", {
     user: userId,
-    createdAt: { $gte: since },
+    createdAt: { $gte: since }
   });
 
   return {
     failedAttempts,
     suspiciousIPCount: uniqueIps.length,
-    isSuspicious: failedAttempts > 5 || uniqueIps.length > 3,
+    isSuspicious: failedAttempts > 5 || uniqueIps.length > 3
   };
 };
 
 activityLogSchema.statics.deleteOldLogs = async function (days = 365) {
   const cutoff = new Date(Date.now() - days * 86400000);
-
   const res = await this.updateMany(
     { createdAt: { $lt: cutoff } },
     { $set: { isDeleted: true } }
   );
-
   return res.modifiedCount;
 };
 
+
 //
-// VIRTUALS
+// 🎯 Virtuals
 //
 activityLogSchema.virtual("formattedDate").get(function () {
   return this.createdAt.toLocaleString("en-IN", {
     dateStyle: "medium",
-    timeStyle: "short",
+    timeStyle: "short"
   });
 });
 
